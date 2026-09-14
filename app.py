@@ -198,6 +198,16 @@ def load_data():
                     "date": item.get("date", ""),
                 })
         saved["recent_sessions"] = repaired[:10]
+
+        # Clean up duplicate completion names from older versions.
+        seen_completed = set()
+        unique_completed = []
+        for name in saved["completed"]:
+            if isinstance(name, str) and name in DRILL_BY_NAME and name not in seen_completed:
+                seen_completed.add(name)
+                unique_completed.append(name)
+        saved["completed"] = unique_completed
+
         return saved
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return fresh_defaults()
@@ -252,9 +262,23 @@ def current_week_key():
 
 
 def reset_week_if_needed():
-    if data.get("week_key") != current_week_key():
-        data["week_key"] = current_week_key()
-        data["weekly_sessions"] = 0
+    """Keep the weekly training-day counter accurate."""
+    week_key = current_week_key()
+    changed = data.get("week_key") != week_key
+    data["week_key"] = week_key
+
+    weekly_days = 0
+    for day_text in data.get("training_dates", []):
+        try:
+            day = date.fromisoformat(str(day_text)[:10])
+        except ValueError:
+            continue
+        if day.strftime("%Y-%W") == week_key:
+            weekly_days += 1
+
+    data["weekly_sessions"] = weekly_days
+
+    if changed:
         save_data()
 
 
@@ -271,10 +295,11 @@ def get_streak():
 
 
 def record_training_day():
+    """Count a calendar day once toward the weekly training goal."""
     today = date.today().isoformat()
     if today not in data["training_dates"]:
         data["training_dates"].append(today)
-    data["weekly_sessions"] = int(data.get("weekly_sessions", 0)) + 1
+        data["weekly_sessions"] = int(data.get("weekly_sessions", 0)) + 1
     save_data()
 
 
@@ -297,15 +322,21 @@ def next_level_text(xp):
 
 
 def completion_xp(drill):
-    repeats = int(data["completion_counts"].get(drill["name"], 0))
-    if repeats > 0:
-        return 5
-    return {"Beginner": 25, "Intermediate": 30, "Advanced": 35}[drill["level"]]
+    return {
+        "Beginner": 25,
+        "Intermediate": 30,
+        "Advanced": 35,
+    }[drill["level"]]
 
 
 def complete_drill(drill):
-    gain = completion_xp(drill)
+    """Complete a drill exactly once. Returns XP gained, or None if already done."""
     name = drill["name"]
+
+    if name in data["completed"]:
+        return None
+
+    gain = completion_xp(drill)
     data["xp"] += gain
     data["sessions"] += 1
     data["completed"].append(name)
@@ -318,6 +349,7 @@ def complete_drill(drill):
     })
     data["recent_sessions"] = data["recent_sessions"][:10]
     record_training_day()
+    save_data()
     return gain
 
 
@@ -328,9 +360,21 @@ def category_rating(category):
 
 
 def choose_recommendation(exclude=None):
-    options = [d for d in DRILLS if d["name"] != exclude]
-    options.sort(key=lambda d: int(data["completion_counts"].get(d["name"], 0)))
-    pool = options[:max(8, len(options) // 3)] or options
+    """Pick a low-completion drill, prioritizing drills never completed."""
+    available = [
+        d for d in DRILLS
+        if d["name"] != exclude and d["name"] not in data["completed"]
+    ]
+
+    # When every drill is complete, keep recommendations available instead of crashing.
+    if not available:
+        available = [d for d in DRILLS if d["name"] != exclude]
+
+    available.sort(
+        key=lambda d: int(data["completion_counts"].get(d["name"], 0))
+    )
+    pool_size = max(8, len(available) // 3)
+    pool = available[:pool_size] or available
     chosen = random.choice(pool)
     st.session_state.recommended_drill = chosen["name"]
     return chosen
@@ -338,12 +382,22 @@ def choose_recommendation(exclude=None):
 
 def get_recommendation():
     name = st.session_state.recommended_drill
-    if name in DRILL_BY_NAME:
+
+    # Keep an existing recommendation only if it has not already been completed.
+    if name in DRILL_BY_NAME and (
+        name not in data["completed"] or len(data["completed"]) >= len(DRILLS)
+    ):
         return DRILL_BY_NAME[name]
-    seed = date.today().toordinal() + int(data["xp"])
-    chosen = random.Random(seed).choice(DRILLS)
-    st.session_state.recommended_drill = chosen["name"]
-    return chosen
+
+    # Deterministic daily starting recommendation, preferring an uncompleted drill.
+    uncompleted = [d for d in DRILLS if d["name"] not in data["completed"]]
+    if uncompleted:
+        seed = date.today().toordinal() + int(data["xp"])
+        chosen = random.Random(seed).choice(uncompleted)
+        st.session_state.recommended_drill = chosen["name"]
+        return chosen
+
+    return choose_recommendation()
 
 
 def go_to(page):
@@ -401,37 +455,64 @@ st.markdown("""
 <style>
 .stApp {
     background:
-      radial-gradient(circle at 6% 12%, rgba(255,255,255,.85) 0 1px, transparent 2px),
-      radial-gradient(circle at 14% 72%, rgba(255,255,255,.65) 0 1px, transparent 2px),
-      radial-gradient(circle at 25% 29%, rgba(255,255,255,.8) 0 1px, transparent 2px),
-      radial-gradient(circle at 36% 86%, rgba(255,255,255,.7) 0 1px, transparent 2px),
-      radial-gradient(circle at 48% 15%, rgba(255,255,255,.8) 0 1px, transparent 2px),
-      radial-gradient(circle at 59% 56%, rgba(255,255,255,.65) 0 1px, transparent 2px),
-      radial-gradient(circle at 70% 11%, rgba(255,255,255,.78) 0 1px, transparent 2px),
-      radial-gradient(circle at 80% 77%, rgba(255,255,255,.7) 0 1px, transparent 2px),
-      radial-gradient(circle at 92% 33%, rgba(255,255,255,.75) 0 1px, transparent 2px),
+      radial-gradient(circle at 5% 10%, rgba(255,255,255,.95) 0 2px, transparent 3px),
+      radial-gradient(circle at 12% 42%, rgba(255,255,255,.65) 0 1px, transparent 2.5px),
+      radial-gradient(circle at 18% 78%, rgba(255,255,255,.8) 0 1.5px, transparent 3px),
+      radial-gradient(circle at 27% 23%, rgba(255,255,255,.9) 0 2px, transparent 3px),
+      radial-gradient(circle at 34% 66%, rgba(255,255,255,.55) 0 1px, transparent 2.5px),
+      radial-gradient(circle at 41% 14%, rgba(255,255,255,.8) 0 1.5px, transparent 3px),
+      radial-gradient(circle at 48% 87%, rgba(255,255,255,.9) 0 2px, transparent 3px),
+      radial-gradient(circle at 55% 38%, rgba(255,255,255,.6) 0 1px, transparent 2.5px),
+      radial-gradient(circle at 63% 72%, rgba(255,255,255,.85) 0 1.5px, transparent 3px),
+      radial-gradient(circle at 70% 11%, rgba(255,255,255,.95) 0 2px, transparent 3px),
+      radial-gradient(circle at 77% 52%, rgba(255,255,255,.55) 0 1px, transparent 2.5px),
+      radial-gradient(circle at 84% 84%, rgba(255,255,255,.85) 0 1.5px, transparent 3px),
+      radial-gradient(circle at 91% 31%, rgba(255,255,255,.95) 0 2px, transparent 3px),
+      radial-gradient(circle at 97% 66%, rgba(255,255,255,.7) 0 1px, transparent 2.5px),
       #000 !important;
-    color: #fff;
+    color: #d7dce5 !important;
 }
 .block-container { max-width: 1450px; padding-top: 2rem; padding-bottom: 4rem; }
-h1,h2,h3,h4,p,label,span,div { font-family: Arial, Helvetica, sans-serif; }
-h1,h2,h3,h4 { color:#fff !important; }
-p { color:#cfcfcf; }
+h1, h2, h3, h4, p, label {
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+h1, h2, h3, h4 {
+    color: #f5f7fb !important;
+}
+
+p, .stMarkdown p, .stMarkdown li {
+    color: #c8ced9 !important;
+}
+
+[data-testid="stWidgetLabel"] * {
+    color: #d5dae4 !important;
+}
+
+[data-testid="stMetricLabel"] {
+    color: #9da6b5 !important;
+}
+
+[data-testid="stMetricValue"] {
+    color: #eef2f7 !important;
+}
+[data-testid="stWidgetLabel"] * { color:#d5dae4 !important; }
+[data-testid="stMetricLabel"] { color:#9da6b5 !important; }
+[data-testid="stMetricValue"] { color:#eef2f7 !important; }
 section[data-testid="stSidebar"] { background:#050505 !important; border-right:1px solid #222; }
-section[data-testid="stSidebar"] * { color:#fff !important; }
+section[data-testid="stSidebar"] * { color:#e5e7eb !important; }
 .hero { background:linear-gradient(145deg,rgba(255,255,255,.09),rgba(255,255,255,.025)); border:1px solid #303030; border-radius:26px; padding:32px; margin-bottom:22px; box-shadow:0 20px 80px rgba(0,0,0,.2); }
 .card { background:rgba(12,12,12,.96); border:1px solid #282828; border-radius:20px; padding:22px; margin-bottom:16px; }
-.eyebrow { color:#8c8c8c; text-transform:uppercase; letter-spacing:.12em; font-size:.76rem; font-weight:800; }
+.eyebrow { color:#8f98a7 !important; text-transform:uppercase; letter-spacing:.12em; font-size:.76rem; font-weight:800; }
 .big-title { font-size:clamp(2.5rem,6vw,5rem); font-weight:950; letter-spacing:-4px; line-height:.95; margin-top:5px; }
 .stat-card { background:#0b0b0b; border:1px solid #272727; border-radius:18px; padding:19px; text-align:center; min-height:116px; }
-.stat-num { font-size:2rem; font-weight:950; }
-.stat-label { color:#888; font-size:.75rem; text-transform:uppercase; letter-spacing:.08em; }
+.stat-num { font-size:2rem; font-weight:950; color:#f5f7fb !important; }
+.stat-label { color:#8e97a5 !important; font-size:.75rem; text-transform:uppercase; letter-spacing:.08em; }
 .stButton > button { background:#fff !important; color:#000 !important; border:1px solid #fff !important; border-radius:12px !important; min-height:46px !important; font-weight:850 !important; transition:.18s ease; }
 .stButton > button:hover { background:#e9e9e9 !important; color:#000 !important; transform:translateY(-1px); }
-/* White boxes = black text */
+.stButton > button:disabled { background:#1b1b1b !important; color:#7f8792 !important; border:1px solid #303030 !important; opacity:1 !important; }
 div[data-baseweb="select"] > div { background:#fff !important; color:#000 !important; border:1px solid #d8d8d8 !important; border-radius:12px !important; }
 div[data-baseweb="select"] * { color:#000 !important; }
-div[data-baseweb="select"] span { color:#000 !important; }
 div[data-baseweb="select"] input { color:#000 !important; caret-color:#000 !important; }
 div[data-baseweb="popover"] { background:#fff !important; border:1px solid #ddd !important; border-radius:14px !important; box-shadow:0 20px 60px rgba(0,0,0,.55) !important; overflow:hidden !important; }
 div[data-baseweb="popover"] * { color:#000 !important; }
@@ -439,18 +520,16 @@ div[data-baseweb="menu"] { background:#fff !important; }
 div[data-baseweb="menu"] li { background:#fff !important; color:#000 !important; }
 div[data-baseweb="menu"] li * { color:#000 !important; }
 div[data-baseweb="menu"] li:hover { background:#eee !important; color:#000 !important; }
-div[data-baseweb="menu"] li:hover * { color:#000 !important; }
 [role="listbox"] { background:#fff !important; color:#000 !important; }
 [role="option"] { background:#fff !important; color:#000 !important; }
 [role="option"] * { color:#000 !important; }
 [role="option"]:hover,[role="option"][aria-selected="true"] { background:#eee !important; color:#000 !important; }
-[role="option"]:hover *,[role="option"][aria-selected="true"] * { color:#000 !important; }
 input,textarea { background:#fff !important; color:#000 !important; border:1px solid #d8d8d8 !important; border-radius:12px !important; }
 input::placeholder,textarea::placeholder { color:#666 !important; }
 [data-testid="stFileUploader"] { background:#0d0d0d !important; border:1px dashed #444 !important; border-radius:16px !important; }
-[data-testid="stFileUploader"] * { color:#fff !important; }
+[data-testid="stFileUploader"] * { color:#e7eaf0 !important; }
 details { background:#0c0c0c !important; border:1px solid #282828 !important; border-radius:14px !important; }
-details summary { color:#fff !important; }
+details summary { color:#f2f4f7 !important; }
 hr { border-color:#242424 !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -518,17 +597,35 @@ def render_drill(drill, actions=True, key_prefix="drill"):
         st.write(f"**Coach tip:** {drill['tip']}")
 
     if actions:
+        already_completed = drill["name"] in data["completed"]
         a, b = st.columns(2)
         with a:
-            if st.button("✅ Complete Drill", key=f"complete_{key_prefix}", use_container_width=True):
+            button_label = "✅ Drill Completed" if already_completed else "✅ Complete Drill"
+            if st.button(
+                button_label,
+                key=f"complete_{key_prefix}",
+                use_container_width=True,
+                disabled=already_completed,
+            ):
                 gain = complete_drill(drill)
-                choose_recommendation(exclude=drill["name"])
-                st.success(f"+{gain} XP earned! ⚡")
-                st.rerun()
+                if gain is None:
+                    st.warning("⚠️ You already completed this drill. No extra XP is awarded.")
+                else:
+                    choose_recommendation(exclude=drill["name"])
+                    st.success(f"+{gain} XP earned! ⚡")
+                    st.rerun()
+
         with b:
-            if st.button("🔄 New Recommendation", key=f"new_{key_prefix}", use_container_width=True):
+            if st.button(
+                "🔄 New Recommendation",
+                key=f"new_{key_prefix}",
+                use_container_width=True,
+            ):
                 choose_recommendation(exclude=drill["name"])
                 st.rerun()
+
+        if already_completed:
+            st.info("You've already completed this drill. Choose a new recommendation to keep training.")
 
 
 # =========================================================
@@ -647,11 +744,19 @@ elif st.session_state.page == "Start Session":
         if session_level != "Mixed":
             pool = [d for d in pool if d["level"] == session_level]
 
-        target = min({15: 3, 30: 5, 45: 7, 60: 9}[duration], len(pool))
-        st.info(f"This session will use {target} drills with no duplicates.")
+        # Prefer drills that have not been completed yet so a session does not
+        # immediately fill with drills that cannot award XP again.
+        uncompleted_pool = [d for d in pool if d["name"] not in data["completed"]]
+        session_pool = uncompleted_pool if uncompleted_pool else pool
 
-        if st.button("🚀 Build My Session", key="build_session", use_container_width=True):
-            shuffled = pool[:]
+        target = min({15: 3, 30: 5, 45: 7, 60: 9}[duration], len(session_pool))
+        if target == 0:
+            st.warning("No drills match these settings.")
+        else:
+            st.info(f"This session will use {target} drills with no duplicates.")
+
+        if st.button("🚀 Build My Session", key="build_session", use_container_width=True, disabled=target == 0):
+            shuffled = session_pool[:]
             random.shuffle(shuffled)
             st.session_state.session_plan = shuffled[:target]
             st.session_state.session_index = 0
@@ -673,12 +778,22 @@ elif st.session_state.page == "Start Session":
 
             a, b = st.columns(2)
             with a:
-                if st.button("✅ Complete Current Drill", key=f"session_complete_{idx}", use_container_width=True):
+                already_completed = current["name"] in data["completed"]
+                if st.button(
+                    "✅ Drill Completed" if already_completed else "✅ Complete Current Drill",
+                    key=f"session_complete_{idx}",
+                    use_container_width=True,
+                    disabled=already_completed,
+                ):
                     gain = complete_drill(current)
-                    st.session_state.session_total_xp += gain
+                    if gain is not None:
+                        st.session_state.session_total_xp += gain
+                        choose_recommendation(exclude=current["name"])
                     st.session_state.session_index += 1
-                    choose_recommendation(exclude=current["name"])
                     st.rerun()
+
+                if already_completed:
+                    st.info("This drill was already completed, so choose another drill for this session.")
             with b:
                 if st.button("❌ End Session", key="end_session", use_container_width=True):
                     st.session_state.active_session = False
@@ -749,7 +864,8 @@ elif st.session_state.page == "AI Coach":
     target = {20: 3, 30: 4, 45: 6, 60: 8}[duration]
 
     if st.button("🧠 Generate Coach Plan", key="generate_coach", use_container_width=True):
-        randomized = pool[:]
+        fresh_pool = [d for d in pool if d["name"] not in data["completed"]]
+        randomized = (fresh_pool or pool)[:]
         random.shuffle(randomized)
         st.session_state.coach_plan = randomized[:min(target, len(randomized))]
         st.session_state.coach_plan_name = f"{position} · {focus}"
@@ -760,7 +876,8 @@ elif st.session_state.page == "AI Coach":
         for i, drill in enumerate(st.session_state.coach_plan, 1):
             st.markdown(f"<div class='card'><div class='eyebrow'>DRILL {i}</div><h3>{drill['name']}</h3><p>{drill['description']}</p><div style='color:#aaa;'>{drill['category']} · {drill['level']} · {drill['time']}</div></div>", unsafe_allow_html=True)
         if st.button("▶️ Start This Coach Plan", key="start_coach_plan", use_container_width=True):
-            st.session_state.session_plan = st.session_state.coach_plan[:]
+            fresh_plan = [d for d in st.session_state.coach_plan if d["name"] not in data["completed"]]
+            st.session_state.session_plan = fresh_plan or st.session_state.coach_plan[:]
             st.session_state.session_index = 0
             st.session_state.session_total_xp = 0
             st.session_state.session_bonus_given = False
@@ -862,7 +979,7 @@ Be specific, practical and encouraging.
                 "detail": "low",
             })
 
-        model = os.environ.get("FUT_TUT_AI_MODEL", "gpt-5.6-luna")
+        model = os.environ.get("FUT_TUT_AI_MODEL", "gpt-5")
         response = client.responses.create(
             model=model,
             input=[{"role": "user", "content": content}],
