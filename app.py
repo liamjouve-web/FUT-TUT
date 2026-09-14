@@ -1,9 +1,4 @@
-```python
-import os
-import json
-import random
-import time
-from datetime import date, datetime, timedelta
+time, timedelta
 
 import streamlit as st
 
@@ -2365,4 +2360,3 @@ else:
 
     st.session_state.page = "Home"
     st.rerun()
-```
