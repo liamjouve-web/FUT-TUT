@@ -7,7 +7,7 @@ import tempfile
 import base64
 from datetime import datetime, date, timedelta
 
-import streamlit as stt as st
+import streamlit as st
 
 
 # =========================================================
