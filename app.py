@@ -235,8 +235,13 @@ STATE_DEFAULTS = {
     "selected_drill": None,
     "intro_seen": False,
     "drill_active": False,
+    "drill_paused": False,
     "drill_started_at": None,
+    "drill_elapsed_before_pause": 0,
     "drill_duration_seconds": 600,
+    "uploaded_video_bytes": None,
+    "uploaded_video_name": None,
+    "uploaded_video_key": None,
     "completion_flash": None,
     "level_up_to": None,
     "session_active": False,
@@ -245,7 +250,10 @@ STATE_DEFAULTS = {
     "session_xp": 0,
     "session_name": "",
     "session_bonus_claimed": False,
+    "session_started_at": None,
+    "session_duration_minutes": 30,
     "coach_messages": [],
+    "drill_search": "",
 }
 
 for key, value in STATE_DEFAULTS.items():
@@ -266,6 +274,17 @@ def render_html(body):
         st.html(body)
     else:
         st.markdown(body, unsafe_allow_html=True)
+
+
+def section_heading(text, emoji=""):
+    label = f"{emoji} {text}".strip()
+    render_html(f"<div class='section-heading'>{esc(label)}</div>")
+
+
+def page_title(text, subtitle=None):
+    render_html(f"<div class='page-title'>{esc(text)}</div>")
+    if subtitle:
+        render_html(f"<div class='page-subtitle'>{esc(subtitle)}</div>")
 
 
 def go_to(page, drill_name=None):
@@ -316,10 +335,14 @@ def daily_done():
 
 def weekly_training_days():
     week = current_week()
-    return sum(
-        1 for v in data.get("training_dates", [])
-        if isinstance(v, str) and v[:10] and date.fromisoformat(v[:10]).strftime("%Y-%W") == week
-    )
+    count = 0
+    for v in data.get("training_dates", []):
+        try:
+            if date.fromisoformat(str(v)[:10]).strftime("%Y-%W") == week:
+                count += 1
+        except Exception:
+            pass
+    return count
 
 
 def get_streak():
@@ -397,10 +420,11 @@ def skill_rating(category):
 
 
 def is_unlocked(drill):
-    idx = [d for d in DRILLS if d["category"] == drill["category"]].index(drill)
+    category_drills = [d for d in DRILLS if d["category"] == drill["category"]]
+    idx = category_drills.index(drill)
     completed = category_completed_count(drill["category"])
-    # Start with two drills available, then unlock one new drill for each completed drill.
-    return idx < min(10, completed + 2)
+    # Two drills are open immediately. Every completion opens one more node.
+    return idx < min(len(category_drills), completed + 2)
 
 
 def recommendation():
@@ -518,6 +542,9 @@ h1{font-weight:950!important;letter-spacing:-2px;color:var(--text)!important}h2,
 div[data-baseweb="select"]>div,input,textarea{border-radius:14px!important}.stProgress>div>div>div>div,.stProgress>div>div{border-radius:999px!important}
 [data-testid="stChatMessage"]{border-radius:18px;margin-bottom:9px}
 @media(max-width:700px){.block-container{padding-left:12px;padding-right:12px;padding-top:.55rem}.stButton>button{min-height:56px;font-size:1rem!important}h1{font-size:2.2rem!important}}
+.section-heading{font-size:1.35rem;font-weight:950;letter-spacing:-.35px;color:#202124;margin:22px 0 10px;padding:0 2px}
+.page-title{font-size:2.35rem;font-weight:950;letter-spacing:-1.7px;color:#202124;margin:7px 0 3px}
+.page-subtitle{font-size:.95rem;color:#70757a;font-weight:650;line-height:1.45;margin-bottom:14px}
 .card{background:#fff;border:2px solid var(--line);border-radius:22px;box-shadow:var(--shadow);padding:18px;margin:12px 0}
 .eyebrow{font-size:.68rem;font-weight:950;letter-spacing:.13em;color:#888}.inverse{color:rgba(255,255,255,.83)!important}.row{display:flex;justify-content:space-between;align-items:center;gap:10px}
 .hero{background:linear-gradient(135deg,#58cc02,#7be121);color:#fff;border-radius:28px;padding:26px 23px;box-shadow:0 7px 0 #46a900;margin:10px 0 18px}.hero-title{font-size:clamp(2.5rem,10vw,4rem);font-weight:950;letter-spacing:-3px;line-height:.97;margin-top:7px}.hero-sub{font-weight:750;color:rgba(255,255,255,.92);margin-top:7px}.hero-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:20px}.hero-stats div{background:rgba(255,255,255,.16);padding:11px 8px;border-radius:15px;text-align:center}.hero-stats strong,.hero-stats span{display:block}.hero-stats strong{font-size:1.18rem}.hero-stats span{font-size:.62rem;font-weight:900;letter-spacing:.08em;opacity:.8}
@@ -526,7 +553,7 @@ div[data-baseweb="select"]>div,input,textarea{border-radius:14px!important}.stPr
 .drill-hero{background:linear-gradient(135deg,#1f2124,#343940);color:#fff;border-radius:27px;padding:25px;box-shadow:0 7px 0 #151719;margin:10px 0 18px}.drill-hero .eyebrow{color:#b2b7bb}.drill-title{font-size:clamp(2.1rem,8vw,3.6rem);font-weight:950;letter-spacing:-2px;line-height:1;margin-top:8px}.drill-sub{color:#d9dde1;line-height:1.45;margin-top:10px}.drill-hero .meta span{background:rgba(255,255,255,.10);color:#fff}
 .step{display:flex;gap:13px;align-items:center;background:#fff;border:2px solid var(--line);border-radius:20px;box-shadow:var(--shadow);padding:14px;margin:10px 0}.num{width:39px;height:39px;border-radius:50%;background:#58cc02;color:#fff;display:grid;place-items:center;font-weight:950;flex:0 0 auto}.step-text{font-weight:750;color:#34383c}.focus{background:#eef8ff;border:2px solid #ccecff;border-radius:22px;padding:18px;margin:12px 0}.focus-title{font-size:1.2rem;font-weight:950;margin-top:4px}.tip{color:#5d6870;margin-top:7px}
 .video-box{border-radius:22px;background:#17191c;color:#fff;padding:34px 20px;text-align:center;margin:12px 0}.play{width:64px;height:64px;border-radius:50%;background:#58cc02;color:#fff;display:grid;place-items:center;margin:0 auto 12px;font-size:1.4rem}.video-title{font-size:1.2rem;font-weight:950}.video-sub{color:#b8bec4;max-width:500px;margin:5px auto 0;line-height:1.4}
-.timer{background:linear-gradient(135deg,#58cc02,#78df20);color:#fff;border-radius:27px;padding:24px;text-align:center;box-shadow:0 7px 0 #46a900;margin:16px 0}.timer-label{font-size:.68rem;font-weight:950;letter-spacing:.15em;color:rgba(255,255,255,.82)}.timer-number{font-size:clamp(3.6rem,17vw,6rem);font-weight:950;letter-spacing:-4px;line-height:1;margin:6px 0}.timer-note{font-weight:750;color:rgba(255,255,255,.92)}
+.timer{background:linear-gradient(135deg,#58cc02,#78df20);color:#fff;border-radius:27px;padding:24px;text-align:center;box-shadow:0 7px 0 #46a900;margin:16px 0}.timer.paused{background:linear-gradient(135deg,#777,#909090);box-shadow:0 7px 0 #606060}.timer-label{font-size:.68rem;font-weight:950;letter-spacing:.15em;color:rgba(255,255,255,.82)}.timer-number{font-size:clamp(3.6rem,17vw,6rem);font-weight:950;letter-spacing:-4px;line-height:1;margin:6px 0}.timer-note{font-weight:750;color:rgba(255,255,255,.92)}
 .success{background:#effbe9;border:2px solid #bfeaa8;border-radius:24px;padding:24px;text-align:center;margin:15px 0}.success-icon{font-size:3rem}.success-title{font-size:1.7rem;font-weight:950}.success-xp{font-size:2rem;font-weight:950;color:#46a900}.success-sub{color:#6f777d;margin-top:5px}.info{background:#eef7ff;border:2px solid #c9e9ff;border-radius:24px;padding:22px;text-align:center;margin:15px 0}
 .path-head,.path,.skill,.achievement,.history,.challenge,.mini{background:#fff;border:2px solid var(--line);border-radius:21px;box-shadow:var(--shadow);margin:10px 0}.path-head{padding:18px;display:flex;justify-content:space-between;align-items:center}.path-title{font-size:1.5rem;font-weight:950}.orb{width:50px;height:50px;border-radius:50%;display:grid;place-items:center;background:#eef9e8}.path{display:flex;gap:13px;align-items:center;padding:14px}.path.locked{opacity:.52}.path.done{background:#f7fff2;border-color:#bfeaa8}.path-icon{font-size:1.5rem;min-width:36px;text-align:center}.path-name{font-weight:950;font-size:1.08rem;margin:4px 0}.path-meta{font-size:.76rem;color:#777;font-weight:800}
 .session,.current,.finish{border-radius:27px;padding:24px;box-shadow:0 7px 0 #1595cf;margin:14px 0;color:#fff;background:linear-gradient(135deg,#1cb0f6,#43c4ff)}.session-big{font-size:2.5rem;font-weight:950}.session-sub{font-weight:750;color:rgba(255,255,255,.9)}.session-list{display:grid;gap:7px;margin-top:15px}.session-list span{background:rgba(255,255,255,.13);border-radius:12px;padding:8px 10px;font-weight:750}.current{padding:25px;background:linear-gradient(135deg,#58cc02,#78df20);box-shadow:0 7px 0 #46a900}.current-title{font-size:2.2rem;font-weight:950;line-height:1;margin-top:7px;letter-spacing:-1px}.current-meta{margin-top:9px;font-weight:800}.finish{background:linear-gradient(135deg,#ffc800,#ffd83f);box-shadow:0 7px 0 #d9aa00;text-align:center;color:#252525}.finish .trophy{font-size:4rem}.finish-title{font-size:2.3rem;font-weight:950}.finish-xp{font-size:2rem;font-weight:950}.finish-sub{font-weight:700;color:#5b5b5b}
@@ -646,7 +673,7 @@ if st.session_state.page == "Home":
     """)
     st.progress(1 if done else 0, text="Daily goal complete 🔥" if done else "0 / 1 drills")
 
-    st.markdown("### ⭐ Recommended for you")
+    section_heading("Recommended for you", "⭐")
     render_html(f"""
     <div class="drill-card"><div class="row"><div class="eyebrow">{esc(rec['category'])} · {esc(rec['level'])}</div><div class="pill">+{rec['xp']} XP</div></div>
       <div class="drill-name">{esc(rec['name'])}</div><div class="desc">{esc(rec['description'])}</div>
@@ -664,7 +691,7 @@ if st.session_state.page == "Home":
         if st.button("⚡ BUILD SESSION", key="home_session", use_container_width=True):
             go_to("Start Session")
 
-    st.markdown("### Your numbers")
+    section_heading("Your numbers")
     a,b,c = st.columns(3)
     for col, value, label in [(a, len(data['completed']), 'DRILLS'), (b, data['sessions'], 'TRAINING'), (c, weekly_training_days(), 'THIS WEEK')]:
         with col:
@@ -692,9 +719,13 @@ elif st.session_state.page == "Drill":
     </div>
     """)
 
-    st.markdown("### 🎥 Watch & learn")
+    section_heading("Watch & learn", "🎥")
     local_or_hosted = video_for(drill)
-    uploaded = st.session_state.get("uploaded_video") if st.session_state.get("uploaded_video_key") == drill["video_key"] else None
+    uploaded = (
+        st.session_state.get("uploaded_video_bytes")
+        if st.session_state.get("uploaded_video_key") == drill["video_key"]
+        else None
+    )
     video_source = uploaded or local_or_hosted
     if video_source:
         try:
@@ -704,13 +735,24 @@ elif st.session_state.page == "Drill":
     else:
         render_html("<div class='video-box'><div class='play'>▶</div><div class='video-title'>Demo video slot ready</div><div class='video-sub'>Add videos/<i>video-key</i>.mp4 or a hosted MP4 URL in VIDEO_URLS. You can also upload one below for this session.</div></div>")
 
-    uploaded_file = st.file_uploader("Optional demo video", type=["mp4", "mov", "webm"], key=f"video_upload_{drill['id']}")
+    uploaded_file = st.file_uploader(
+        "Optional demo video",
+        type=["mp4", "mov", "webm"],
+        key=f"video_upload_{drill['id']}",
+        help="For testing only: the upload lasts for this browser session and is not saved to the app repository.",
+    )
     if uploaded_file is not None:
-        st.session_state.uploaded_video = uploaded_file
+        st.session_state.uploaded_video_bytes = uploaded_file.getvalue()
+        st.session_state.uploaded_video_name = uploaded_file.name
         st.session_state.uploaded_video_key = drill["video_key"]
-        st.video(uploaded_file)
 
-    st.markdown("### 📚 How to do it")
+    if (
+        st.session_state.get("uploaded_video_bytes")
+        and st.session_state.get("uploaded_video_key") == drill["video_key"]
+    ):
+        st.video(st.session_state.uploaded_video_bytes)
+
+    section_heading("How to do it", "📚")
     for i, step in enumerate(drill["steps"], 1):
         render_html(f"<div class='step'><div class='num'>{i}</div><div class='step-text'>{esc(step)}</div></div>")
 
@@ -720,36 +762,64 @@ elif st.session_state.page == "Drill":
     if not st.session_state.drill_active:
         if primary_button("▶ START DRILL", "drill_start"):
             st.session_state.drill_active = True
+            st.session_state.drill_paused = False
             st.session_state.drill_started_at = time.time()
+            st.session_state.drill_elapsed_before_pause = 0
             st.session_state.drill_duration_seconds = duration
             st.session_state.completion_flash = None
             st.rerun()
     else:
-        started = float(st.session_state.drill_started_at or time.time())
-        elapsed = max(0, int(time.time() - started))
+        paused = bool(st.session_state.drill_paused)
+        if paused:
+            elapsed = int(st.session_state.drill_elapsed_before_pause)
+        else:
+            started = float(st.session_state.drill_started_at or time.time())
+            elapsed = int(st.session_state.drill_elapsed_before_pause + max(0, time.time() - started))
+        elapsed = min(duration, max(0, elapsed))
         remaining = max(0, duration - elapsed)
 
-        # Live countdown is client-side so the numbers actually move without Streamlit reruns.
-        timer_html = f"""
-        <div class='timer'><div class='timer-label'>DRILL IN PROGRESS</div><div id='futtut-live-timer' class='timer-number'>{format_seconds(remaining)}</div><div class='timer-note'>Stay controlled. Quality first.</div></div>
-        <script>
-        const started={started}; const duration={duration}; const el=document.getElementById('futtut-live-timer');
-        function tick(){{const left=Math.max(0,duration-Math.floor(Date.now()/1000-started)); const m=String(Math.floor(left/60)).padStart(2,'0'); const s=String(left%60).padStart(2,'0'); if(el) el.textContent=m+':'+s;}}
-        tick(); setInterval(tick,250);
-        </script>
-        """
-        components.html(timer_html, height=170, scrolling=False)
+        if paused:
+            render_html(f"<div class='timer paused'><div class='timer-label'>DRILL PAUSED</div><div class='timer-number'>{format_seconds(remaining)}</div><div class='timer-note'>Your progress is saved. Resume when you're ready.</div></div>")
+        else:
+            # Browser-side countdown: the displayed clock moves without a Streamlit rerun.
+            started = float(st.session_state.drill_started_at or time.time())
+            base_elapsed = int(st.session_state.drill_elapsed_before_pause)
+            timer_html = f"""
+            <div class='timer'><div class='timer-label'>DRILL IN PROGRESS</div><div id='futtut-live-timer' class='timer-number'>{format_seconds(remaining)}</div><div class='timer-note'>Stay controlled. Quality first.</div></div>
+            <script>
+            const started={started}; const baseElapsed={base_elapsed}; const duration={duration}; const el=document.getElementById('futtut-live-timer');
+            function tick(){{const used=Math.min(duration,baseElapsed+Math.floor(Date.now()/1000-started)); const left=Math.max(0,duration-used); const m=String(Math.floor(left/60)).padStart(2,'0'); const s=String(left%60).padStart(2,'0'); if(el) el.textContent=m+':'+s;}}
+            tick(); setInterval(tick,250);
+            </script>
+            """
+            components.html(timer_html, height=170, scrolling=False)
+
         st.progress(min(1, elapsed / max(1, duration)), text=f"{format_seconds(elapsed)} elapsed · {format_seconds(remaining)} left")
 
         if primary_button("✅ COMPLETE DRILL", "complete_active"):
             gain, xp_new, first_time = complete_drill(drill)
             st.session_state.drill_active = False
+            st.session_state.drill_paused = False
             st.session_state.drill_started_at = None
+            st.session_state.drill_elapsed_before_pause = 0
             st.session_state.completion_flash = {"gain": gain, "xp_new": xp_new, "first_time": first_time, "name": drill["name"]}
             st.rerun()
-        if st.button("⏸ PAUSE / EXIT", key="pause_drill", use_container_width=True):
+
+        pause_label = "▶️ RESUME DRILL" if paused else "⏸ PAUSE DRILL"
+        if st.button(pause_label, key="pause_drill", use_container_width=True):
+            if paused:
+                st.session_state.drill_paused = False
+                st.session_state.drill_started_at = time.time()
+            else:
+                st.session_state.drill_elapsed_before_pause = elapsed
+                st.session_state.drill_paused = True
+            st.rerun()
+
+        if st.button("✕ EXIT DRILL", key="exit_drill", use_container_width=True):
             st.session_state.drill_active = False
+            st.session_state.drill_paused = False
             st.session_state.drill_started_at = None
+            st.session_state.drill_elapsed_before_pause = 0
             st.rerun()
 
     if st.session_state.completion_flash:
@@ -786,14 +856,42 @@ elif st.session_state.page == "Drill":
 # =========================================================
 
 elif st.session_state.page == "Training":
-    st.title("🗺️ Training Path")
-    st.caption("A clear skill tree: learn, complete, unlock, repeat.")
+    page_title("Training Path", "Build your skill tree one drill at a time.")
+    search = st.text_input(
+        "Search drills",
+        value=st.session_state.get("drill_search", ""),
+        placeholder="Try: finishing, wall, sprint…",
+        key="drill_search_input",
+    )
+    st.session_state.drill_search = search.strip()
+
     category = st.selectbox("Skill", CATEGORIES, key="training_skill")
-    drills = [d for d in DRILLS if d["category"] == category]
+    difficulty_filter = st.selectbox("Difficulty", ["All"] + LEVELS, key="training_difficulty")
+
+    all_category_drills = [d for d in DRILLS if d["category"] == category]
+    drills = all_category_drills[:]
+
+    if difficulty_filter != "All":
+        drills = [d for d in drills if d["level"] == difficulty_filter]
+
+    if st.session_state.drill_search:
+        q = st.session_state.drill_search.lower()
+        drills = [
+            d for d in drills
+            if q in d["name"].lower()
+            or q in d["description"].lower()
+            or q in d["focus"].lower()
+        ]
+        if not drills:
+            st.info("No drills match those filters.")
+
+    # Header progress always reflects the whole skill, not a filtered subset.
     complete_count = category_completed_count(category)
 
-    render_html(f"<div class='path-head'><div><div class='eyebrow'>{esc(category.upper())}</div><div class='path-title'>{complete_count}/{len(drills)} completed</div></div><div class='orb'>⚡</div></div>")
-    st.progress(complete_count / max(1,len(drills)), text=f"{complete_count}/{len(drills)} completed")
+    render_html(f"<div class='path-head'><div><div class='eyebrow'>{esc(category.upper())}</div><div class='path-title'>{complete_count}/{len(all_category_drills)} completed</div></div><div class='orb'>⚡</div></div>")
+    st.progress(complete_count / max(1, len(all_category_drills)), text=f"{complete_count}/{len(all_category_drills)} completed")
+    if len(drills) != len(all_category_drills):
+        st.caption(f"Showing {len(drills)} matching drill(s).")
 
     for i, drill in enumerate(drills,1):
         unlocked = is_unlocked(drill)
@@ -819,8 +917,7 @@ elif st.session_state.page == "Training":
 # =========================================================
 
 elif st.session_state.page == "Start Session":
-    st.title("⚡ Training Session")
-    st.caption("Build a focused session, lock the plan, and finish it cleanly.")
+    page_title("Training Session", "Build a focused session, lock it in, and finish it cleanly.")
 
     if not st.session_state.session_active:
         duration = st.select_slider("Session length", [15,30,45,60], value=30, format_func=lambda x:f"{x} min")
@@ -839,6 +936,8 @@ elif st.session_state.page == "Start Session":
             st.session_state.session_xp = 0
             st.session_state.session_bonus_claimed = False
             st.session_state.session_name = f"{style} Session"
+            st.session_state.session_duration_minutes = int(duration)
+            st.session_state.session_started_at = time.time()
             st.session_state.session_active = True
             st.rerun()
     else:
@@ -849,7 +948,7 @@ elif st.session_state.page == "Start Session":
             st.progress(i / max(1,len(plan)), text=f"Drill {i+1} of {len(plan)}")
             render_html(f"<div class='current'><div class='eyebrow inverse'>{esc(st.session_state.session_name)}</div><div class='current-title'>{esc(current['name'])}</div><div class='current-meta'>⚡ +{current['xp']} XP · {esc(current['time'])} · {esc(current['reps'])}</div></div>")
             st.write(current["description"])
-            st.markdown("### How to do it")
+            section_heading("How to do it")
             for step in current["steps"]:
                 st.write("• " + step)
             if st.button("✅ COMPLETE & NEXT", key=f"session_next_{i}", use_container_width=True, type="primary"):
@@ -868,17 +967,24 @@ elif st.session_state.page == "Start Session":
                 add_xp(50)
                 st.session_state.session_xp += 50
                 st.session_state.session_bonus_claimed = True
-            render_html(f"<div class='finish'><div class='trophy'>🏆</div><div class='finish-title'>SESSION COMPLETE</div><div class='finish-xp'>+{st.session_state.session_xp} XP</div><div class='finish-sub'>Your session bonus was added exactly once. The plan is now complete.</div></div>")
+            elapsed_session = 0
+            if st.session_state.session_started_at:
+                elapsed_session = max(0, int(time.time() - st.session_state.session_started_at))
+            mins = elapsed_session // 60
+            secs = elapsed_session % 60
+            render_html(f"<div class='finish'><div class='trophy'>🏆</div><div class='finish-title'>SESSION COMPLETE</div><div class='finish-xp'>+{st.session_state.session_xp} XP</div><div class='finish-sub'>{len(plan)} drills · {mins:02d}:{secs:02d} recorded · completion bonus added once.</div></div>")
             if primary_button("🔥 BUILD ANOTHER SESSION", "another_session"):
                 st.session_state.session_active = False
                 st.session_state.session_plan = []
                 st.session_state.session_index = 0
                 st.session_state.session_xp = 0
                 st.session_state.session_bonus_claimed = False
+                st.session_state.session_started_at = None
                 st.rerun()
             if st.button("🏠 BACK HOME", key="session_home", use_container_width=True):
                 st.session_state.session_active = False
                 st.session_state.session_plan = []
+                st.session_state.session_started_at = None
                 go_to("Home")
     bottom_nav("Start Session")
 
@@ -888,8 +994,7 @@ elif st.session_state.page == "Start Session":
 # =========================================================
 
 elif st.session_state.page == "AI Coach":
-    st.title("🤖 AI Coach")
-    st.caption("A real AI-backed soccer coach when your OpenAI key is connected, with an honest local fallback otherwise.")
+    page_title("AI Coach", "Ask about technique, tactics, training, or your FUT TUT progress.")
 
     if not st.session_state.coach_messages:
         st.session_state.coach_messages = [{"role":"assistant","content":f"Hey {player} 👋⚽ I'm your FUT TUT Coach. You're Level {get_level()} with {len(data['completed'])} drills completed. What are we working on?"}]
@@ -933,8 +1038,8 @@ Keep answers focused and actionable.
                     with st.spinner("Coach is thinking…"):
                         client = OpenAI(api_key=api_key)
                         response = client.responses.create(model=model, input=conversation)
-                        answer = response.output_text
-                except Exception as exc:
+                        answer = (response.output_text or "I didn't get a text response from the coach.").strip()
+                except Exception:
                     answer = "I couldn't reach the AI backend right now. Your FUT TUT progress is safe. Check OPENAI_API_KEY and FUT_TUT_AI_MODEL, then try again."
             else:
                 low = prompt.lower()
@@ -959,25 +1064,25 @@ Keep answers focused and actionable.
 # =========================================================
 
 elif st.session_state.page == "Progress":
-    st.title("📈 Your Progress")
+    page_title("Your Progress", "See your level, skill ratings, streak, and training history.")
     render_html(f"<div class='progress-hero'><div class='eyebrow inverse'>CURRENT LEVEL</div><div class='progress-level'>Level {get_level()}</div><div style='font-weight:800;color:rgba(255,255,255,.9)'>{data['xp']} total XP</div></div>")
     st.progress(level_progress(), text=(f"{xp_to_next_level()} XP until Level {get_level()+1}" if get_level() < MAX_LEVEL else "MAX LEVEL"))
 
-    st.markdown("### ⚽ Skill ratings")
+    section_heading("Skill ratings", "⚽")
     for category in CATEGORIES:
         rating = skill_rating(category)
         render_html(f"<div class='skill'><div class='skill-top'><div><div class='eyebrow'>{esc(category)}</div><div class='skill-num'>{rating}</div></div><div class='skill-icon'>{'🔥' if rating >= 70 else '⚡'}</div></div></div>")
         st.progress(rating / 99)
 
-    st.markdown("### 🔥 Weekly goal")
+    section_heading("Weekly goal", "🔥")
     week = weekly_training_days(); goal = max(1,int(data.get("weekly_goal",5)))
     st.progress(min(1,week/goal), text=f"{week}/{goal} training days")
 
-    st.markdown("### 🏆 Achievements")
+    section_heading("Achievements", "🏆")
     for icon, name, desc, unlocked in achievements():
         render_html(f"<div class='achievement {'locked' if not unlocked else ''}'><div class='achievement-icon'>{icon if unlocked else '🔒'}</div><div><div class='achievement-name'>{esc(name)}</div><div class='achievement-desc'>{esc(desc)}</div></div></div>")
 
-    st.markdown("### 🕘 Recent training")
+    section_heading("Recent training", "🕘")
     if not data["recent_sessions"]:
         st.info("Your training history will appear here.")
     else:
@@ -997,8 +1102,7 @@ elif st.session_state.page == "Progress":
 # =========================================================
 
 elif st.session_state.page == "Challenges":
-    st.title("🏆 Challenges")
-    st.caption("One-time bonus XP quests.")
+    page_title("Challenges", "Finish mini quests and collect one-time bonus XP.")
     for ch in challenges():
         done_count = sum(1 for name in ch["drills"] if name in data["completed"])
         claimed = ch["name"] in data["challenge_claimed"]
@@ -1023,7 +1127,7 @@ elif st.session_state.page == "Challenges":
 # =========================================================
 
 elif st.session_state.page == "Profile":
-    st.title("👤 Profile")
+    page_title("Profile", "Set your position and weekly training goal.")
     name = st.text_input("Player name", value=player, max_chars=30)
     position = st.selectbox("Favorite position", POSITIONS, index=POSITIONS.index(data["favorite_position"]) if data["favorite_position"] in POSITIONS else 0)
     goal = st.number_input("Weekly training goal", min_value=1, max_value=14, value=int(data.get("weekly_goal",5)))
