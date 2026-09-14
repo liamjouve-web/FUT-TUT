@@ -402,6 +402,8 @@ def get_recommendation():
 
 def go_to(page):
     st.session_state.page = page
+    # Keep the sidebar navigation widget synchronized with programmatic navigation.
+    st.session_state.nav = page
     st.rerun()
 
 
@@ -564,7 +566,15 @@ with st.sidebar:
     st.markdown("<div style='font-size:2rem;font-weight:950;'>FUT TUT ⚽</div>", unsafe_allow_html=True)
     st.caption("TRAIN. IMPROVE. PLAY.")
 
-    picked = st.radio("Navigate", PAGES, index=PAGES.index(st.session_state.page), label_visibility="collapsed", key="nav")
+    # Sync the radio with the current page so Home → Training and other
+    # programmatic navigation actions do not immediately jump back.
+    st.session_state.nav = st.session_state.page
+    picked = st.radio(
+        "Navigate",
+        PAGES,
+        label_visibility="collapsed",
+        key="nav",
+    )
     if picked != st.session_state.page:
         st.session_state.page = picked
         st.rerun()
