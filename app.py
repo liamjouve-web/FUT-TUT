@@ -32,7 +32,7 @@ VIDEO_DIR = "videos"
 XP_PER_LEVEL = 250
 MAX_LEVEL = 20
 
-CATEGORIES = ["Finishing", "Dribbling", "First Touch", "Passing", "Speed", "Soccer IQ"]
+CATEGORIES = ["Finishing", "Dribbling", "First Touch", "Passing", "Speed", "Soccer IQ", "Goalkeeping"]
 LEVELS = ["Beginner", "Intermediate", "Advanced"]
 POSITIONS = ["Winger", "Striker", "Midfielder", "Defender", "Fullback", "Goalkeeper"]
 STYLES = ["Balanced", "Technical", "Match-like"]
@@ -118,6 +118,18 @@ DRILL_SEEDS = {
         ("Match Reading", "Advanced", "20 min", "20 situations", "Recognize what the game is asking for.", "Understanding the game."),
         ("Space + Timing", "Advanced", "18 min", "20 decisions", "Combine movement, scanning and timing.", "Reading the next action."),
     ],
+    "Goalkeeping": [
+        ("Basic Catching", "Beginner", "10 min", "30 catches", "Build clean handling from easy services at different heights.", "Hand shape and secure catches."),
+        ("GK Footwork Grid", "Beginner", "10 min", "6 rounds", "Move through a small footwork pattern before setting for the next action.", "Quick, balanced feet."),
+        ("Goalkeeper Distribution Basics", "Beginner", "12 min", "20 distributions", "Practice accurate throws and passes to start attacks.", "Accuracy and composure."),
+        ("Low-Shot Saves", "Intermediate", "15 min", "20 saves", "React to low shots and practice getting behind the ball when possible.", "Set position and clean handling."),
+        ("Reaction Hands", "Intermediate", "12 min", "20 reactions", "Respond to short-range hand-reaction services.", "Reaction speed and hand coordination."),
+        ("1v1 Angle Control", "Intermediate", "15 min", "12 situations", "Set your angle and patience when an attacker approaches.", "Distance and patience."),
+        ("Cross Collection", "Intermediate", "15 min", "15 crosses", "Practice reading, moving toward and claiming appropriate crosses.", "Starting position and timing."),
+        ("Rapid-Fire Shot Stopping", "Advanced", "18 min", "20 shots", "Handle a sequence of varied shots while resetting your set position.", "Reset speed and shot reactions."),
+        ("1v1 Reaction Saves", "Advanced", "18 min", "12 situations", "Combine angle control, patience and quick reactions in 1v1 scenarios.", "Decision-making and reactions."),
+        ("Sweeper Keeper Decisions", "Advanced", "20 min", "20 decisions", "Read through-balls and decide when to hold position or safely come out.", "Reading space and communication."),
+    ]
 }
 
 
@@ -415,7 +427,7 @@ def recommendation():
         "Midfielder": ["Passing", "First Touch", "Soccer IQ"],
         "Defender": ["First Touch", "Passing", "Soccer IQ"],
         "Fullback": ["Speed", "Passing", "Dribbling"],
-        "Goalkeeper": ["First Touch", "Passing", "Soccer IQ"],
+        "Goalkeeper": ["Goalkeeping", "First Touch", "Passing", "Soccer IQ"],
     }.get(position, CATEGORIES)
     pool = [d for d in source if d["category"] in preferred] or source
     return random.Random(date.today().toordinal() * 991 + int(data.get("xp", 0))).choice(pool)
@@ -471,7 +483,7 @@ def achievements():
         ("⚡", "First Touch", "Complete your first drill.", completed >= 1),
         ("🔥", "On Fire", "Reach a 3-day streak.", get_streak() >= 3),
         ("💯", "Century", "Earn 100 XP.", data["xp"] >= 100),
-        ("🧠", "All-Rounder", "Train every skill category.", categories == 6),
+        ("🧠", "All-Rounder", "Train every skill category.", categories == len(CATEGORIES)),
         ("🏆", "Skill Builder", "Complete 10 drills.", completed >= 10),
         ("⭐", "Level 5", "Reach Level 5.", get_level() >= 5),
         ("👑", "Elite", "Reach Level 10.", get_level() >= 10),
@@ -487,7 +499,7 @@ def build_session_plan(duration, category, difficulty, style):
     if difficulty != "Mixed":
         pool = [d for d in pool if d["level"] == difficulty]
     if style == "Technical":
-        filtered = [d for d in pool if d["category"] in ["First Touch", "Passing", "Dribbling"]]
+        filtered = [d for d in pool if d["category"] in ["First Touch", "Passing", "Dribbling", "Goalkeeping"]]
         pool = filtered or pool
     elif style == "Match-like":
         filtered = [d for d in pool if d["category"] in ["Soccer IQ", "Finishing", "Dribbling", "Speed"]]
@@ -513,7 +525,8 @@ def _coach_normalize(text):
         "touchh": "touch", "frist": "first", "firt": "first", "thouch": "touch",
         "soccer iq": "soccer iq", "socer": "soccer", "sokcer": "soccer",
         "wng": "winger", "strikr": "striker", "mid": "midfielder", "middy": "midfielder",
-        "def": "defender", "gk": "goalkeeper", "keeper": "goalkeeper",
+        "def": "defender", "gk": "goalkeeper", "keeper": "goalkeeper", "goalie": "goalkeeper",
+        "gkng": "goalkeeping", "goalkeper": "goalkeeper", "goalkeepr": "goalkeeper",
     }
     words=[]
     for word in raw.split():
@@ -526,6 +539,7 @@ def _coach_normalize(text):
         "finishing", "dribbling", "speed", "touch", "first touch", "confidence", "nervous",
         "pressure", "skills", "position", "easier", "harder", "why", "recommend", "recommendation",
         "session", "time", "minutes", "beginner", "intermediate", "advanced", "winger", "striker",
+        "goalkeeper", "goalie", "goalkeeping", "save", "saving", "saves", "handling", "diving",
     ])
     vocab.update(d['name'].lower() for d in DRILLS)
 
@@ -550,6 +564,9 @@ def _coach_extract_topic(text):
         "first touch": "First Touch", "touch": "First Touch", "control": "First Touch",
         "passing": "Passing", "pass": "Passing", "speed": "Speed", "sprint": "Speed",
         "soccer iq": "Soccer IQ", "tactics": "Soccer IQ", "decision": "Soccer IQ",
+        "goalkeeping": "Goalkeeping", "goalkeeper": "Goalkeeping", "keeper": "Goalkeeping",
+        "gk": "Goalkeeping", "goalie": "Goalkeeping", "shot stopping": "Goalkeeping",
+        "shotstopper": "Goalkeeping", "handling": "Goalkeeping", "saving": "Goalkeeping",
     }
     for key, category in topics.items():
         if key in text:
@@ -580,7 +597,7 @@ def _coach_session_plan(days=3):
         "Midfielder":["Passing","First Touch","Soccer IQ","Dribbling"],
         "Defender":["Soccer IQ","First Touch","Passing","Speed"],
         "Fullback":["Speed","Passing","Dribbling","Soccer IQ"],
-        "Goalkeeper":["First Touch","Passing","Soccer IQ"],
+        "Goalkeeper":["Goalkeeping","First Touch","Passing","Soccer IQ"],
     }.get(pos, CATEGORIES)
     categories=[weak] + [c for c in preferred if c != weak]
     picks=[]
@@ -698,7 +715,7 @@ def offline_coach_response(prompt):
             "Midfielder":"scanning, receiving on the back foot, passing, and managing space",
             "Defender":"scanning, first touch, passing, positioning, and timing",
             "Fullback":"speed, passing, 1v1 play, and timing attacking runs",
-            "Goalkeeper":"distribution, first touch, scanning, and decision-making",
+            "Goalkeeper":"shot stopping, handling, positioning, distribution, and decision-making",
         }.get(pos,"first touch, passing, and decision-making")
         return f"As a **{pos}**, I'd build around **{focus}**. ⚽ Your current weakest FUT TUT area is **{weakest} ({ratings[weakest]}/99)**, so that's the first place I'd attack."
 
