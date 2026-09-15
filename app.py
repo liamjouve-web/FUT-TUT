@@ -197,6 +197,62 @@ input, textarea, select, [data-baseweb="select"] > div {
     color:#f4f7fb !important;
 }
 </style>
+
+<style>
+html, body, [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > .main {
+    background: #070a10 !important;
+    color: #f8fbff !important;
+}
+[data-testid="stHeader"] { background: rgba(7,10,16,.92) !important; }
+[data-testid="stSidebar"] { background: #090d15 !important; }
+h1,h2,h3,h4,h5,h6,p,span,label,div { color: #f8fbff; }
+.stTextInput input, .stTextArea textarea, .stNumberInput input {
+    background-color: #0b111b !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    border: 1px solid #30415b !important;
+    border-radius: 12px !important;
+}
+.stTextInput input::placeholder, .stTextArea textarea::placeholder {
+    color: #718096 !important;
+    -webkit-text-fill-color: #718096 !important;
+}
+[data-baseweb="select"] > div {
+    background-color: #0b111b !important;
+    color: #ffffff !important;
+    border-color: #30415b !important;
+}
+[data-baseweb="select"] span { color: #ffffff !important; }
+[data-baseweb="popover"] * { color: #ffffff !important; }
+div.stButton > button {
+    color: #ffffff !important;
+    background: #151f2e !important;
+    border: 1px solid #30415b !important;
+    border-radius: 13px !important;
+    font-weight: 800 !important;
+}
+div.stButton > button:hover {
+    border-color: #62ff9a !important;
+    background: #1b293b !important;
+}
+div.stButton > button[kind="primary"] {
+    color: #06100a !important;
+    background: #62ff9a !important;
+    border-color: #62ff9a !important;
+}
+div.stButton > button[kind="primary"]:hover {
+    background: #7dffac !important;
+}
+div[data-testid="stForm"] {
+    background: linear-gradient(145deg,#111a29,#0a1019) !important;
+    border: 1px solid #2a3b55 !important;
+    border-radius: 24px !important;
+    padding: 24px !important;
+}
+.stCaption, [data-testid="stCaptionContainer"] { color: #9aa8ba !important; }
+[data-testid="stMetricValue"], [data-testid="stMetricLabel"] { color: #ffffff !important; }
+.brand-green { color: #62ff9a !important; }
+</style>
 """, unsafe_allow_html=True)
 
 # ---------- Persistence ----------
@@ -208,6 +264,7 @@ def blank_user():
             "name": "",
             "position": "Winger",
             "style": "Balanced",
+            "email": "",
         },
         "assessment": {
             "completed": False,
@@ -496,7 +553,7 @@ if user is None:
         with st.form("login_form"):
             username = st.text_input("Username", placeholder="your username").strip().lower()
             password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Log In")
+            submitted = st.form_submit_button("Log In →", type="primary")
         if submitted:
             if not username or not password:
                 st.error("Enter both your username and password.")
@@ -511,14 +568,14 @@ if user is None:
     with signup_tab:
         with st.form("signup_form"):
             username = st.text_input("Choose a username", placeholder="3–20 letters/numbers")
-            email = st.text_input("Email (optional)")
+            email = st.text_input("Email (optional)", help="Saved to your profile. Email verification and password-reset emails require a real authentication/email provider.")
             password = st.text_input("Create a password", type="password")
             confirm = st.text_input("Confirm password", type="password")
             agree = st.checkbox("I understand this is a training app and I should involve a parent/guardian for account and public-release decisions.")
-            submitted = st.form_submit_button("Create Account")
+            submitted = st.form_submit_button("Create Account →", type="primary")
         if submitted:
             username_clean = username.strip().lower()
-            if not re.fullmatch(r"[a-z0-9_]{3,20}", username_clean):
+            if (not username_clean.isascii() or not username_clean.replace("_", "").isalnum() or not (3 <= len(username_clean) <= 20)):
                 st.error("Username must be 3–20 characters using letters, numbers, or underscores.")
             elif username_clean in db["users"]:
                 st.error("That username is already taken.")
@@ -552,7 +609,7 @@ if not user["assessment"].get("completed", False) and st.session_state.page == "
 
 # ---------- Sidebar ----------
 with st.sidebar:
-    st.markdown("## FUT TUT ⚽")
+    st.markdown("## FUT <span class=\"brand-green\">TUT</span> ⚽", unsafe_allow_html=True)
     st.caption(f"@{st.session_state.logged_in_user}")
     nav = ["Home", "Drills", "Training Plan", "Assessment", "AI Coach", "Progress", "Profile"]
     for item in nav:
