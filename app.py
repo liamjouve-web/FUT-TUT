@@ -4,6 +4,7 @@ import random
 import re
 import time
 import html
+import difflib
 from datetime import datetime, date, timedelta
 
 import streamlit as st
@@ -246,6 +247,7 @@ STATE_DEFAULTS = {
     "session_name": "",
     "session_bonus_claimed": False,
     "coach_messages": [],
+    "coach_context": {},
 }
 
 for key, value in STATE_DEFAULTS.items():
@@ -496,111 +498,245 @@ def build_session_plan(duration, category, difficulty, style):
     return pool[:min(target, len(pool))]
 
 
-def offline_coach_response(prompt):
-    """A useful, deterministic local coach that works without an API key."""
-    text = prompt.strip().lower()
-    pos = data.get("favorite_position", "Winger")
-    completed = len(data.get("completed", []))
-    streak = get_streak()
-    level = get_level()
-    xp = int(data.get("xp", 0))
+def _coach_normalize(text):
+    """Normalize casual/typo-heavy player messages without changing meaning."""
+    raw = re.sub(r"[^a-z0-9\s'?!+-]", " ", text.lower())
+    raw = re.sub(r"\s+", " ", raw).strip()
 
-    # Safety: keep the local coach from inventing medical advice.
-    if any(word in text for word in ["injury", "injured", "hurt", "pain", "knee", "ankle", "concussion"]):
-        return (
-            "For an injury or pain question, I can't diagnose what's going on. 🛑 "
-            "Tell a parent/guardian and follow the advice of a qualified healthcare professional. "
-            "When you're cleared to train, I can help you build a soccer plan around that guidance."
-        )
+    # Common soccer/chat shorthand and typo fixes.
+    replacements = {
+        "u": "you", "ur": "your", "r": "are", "im": "i am", "idk": "i do not know",
+        "tmrw": "tomorrow", "tmr": "tomorrow", "plz": "please", "pls": "please",
+        "bc": "because", "b4": "before", "w": "with", "abt": "about",
+        "wrk": "work", "wrkng": "working", "dribl": "dribble", "dribblng": "dribbling",
+        "passng": "passing", "finshing": "finishing", "finsh": "finish",
+        "touchh": "touch", "frist": "first", "firt": "first", "thouch": "touch",
+        "soccer iq": "soccer iq", "socer": "soccer", "sokcer": "soccer",
+        "wng": "winger", "strikr": "striker", "mid": "midfielder", "middy": "midfielder",
+        "def": "defender", "gk": "goalkeeper", "keeper": "goalkeeper",
+    }
+    words=[]
+    for word in raw.split():
+        words.append(replacements.get(word, word))
+    normalized=" ".join(words)
 
-    rec = recommendation()
-    best_category = max(CATEGORIES, key=lambda c: skill_rating(c))
-    needs = min(CATEGORIES, key=lambda c: skill_rating(c))
+    vocab = set(CATEGORIES + POSITIONS + [
+        "drill", "training", "train", "plan", "week", "tomorrow", "today", "progress",
+        "stats", "level", "xp", "tactics", "formation", "match", "game", "passing",
+        "finishing", "dribbling", "speed", "touch", "first touch", "confidence", "nervous",
+        "pressure", "skills", "position", "easier", "harder", "why", "recommend", "recommendation",
+        "session", "time", "minutes", "beginner", "intermediate", "advanced", "winger", "striker",
+    ])
+    vocab.update(d['name'].lower() for d in DRILLS)
 
-    if any(w in text for w in ["hello", "hi ", "hey", "yo", "sup"]):
-        return (
-            f"Yo {player} 👋⚽ I'm your FUT TUT Coach. You're Level {level}, "
-            f"with {completed} drills completed and a {streak}-day streak. "
-            f"You're training as a {pos.lower()}. Ask me for a drill, plan, tactics, or progress check."
-        )
-
-    if "progress" in text or "stats" in text or "level" in text:
-        return (
-            f"Here's your FUT TUT check-in: **Level {level}**, **{xp} XP**, "
-            f"**{completed} drills completed**, and a **{streak}-day streak**. 🔥\n\n"
-            f"Strongest current category: **{best_category} ({skill_rating(best_category)}/99)**. "
-            f"Biggest opportunity: **{needs} ({skill_rating(needs)}/99)**. "
-            f"I'd put your next training focus into {needs.lower()}."
-        )
-
-    if "plan" in text or "program" in text or "week" in text:
-        days = [
-            ("Day 1", recommendation(), "Technique + control"),
-            ("Day 2", next((d for d in DRILLS if d['category'] == needs and d['name'] not in data['completed']), rec), "Weak area"),
-            ("Day 3", next((d for d in DRILLS if d['category'] == "Soccer IQ" and d['name'] not in data['completed']), rec), "Decision-making"),
-        ]
-        lines = [f"**{day}:** {d['name']} — {focus} (+{d['xp']} XP)" for day,d,focus in days]
-        return (
-            f"Here's a simple 3-day FUT TUT plan for a {pos.lower()}:\n\n" +
-            "\n".join(lines) +
-            "\n\nKeep the goal simple: clean technique first, then speed."
-        )
-
-    if "drill" in text or "train" in text or "work on" in text or "what should" in text:
-        # Specific category matching beats generic recommendation.
-        category_hits = {c.lower(): c for c in CATEGORIES if c.lower() in text}
-        chosen_category = next(iter(category_hits.values()), None)
-        if chosen_category:
-            candidates = [d for d in DRILLS if d['category'] == chosen_category and d['name'] not in data['completed']]
-            chosen = candidates[0] if candidates else next(d for d in DRILLS if d['category'] == chosen_category)
+    # Word-level fuzzy repair for obvious misspellings.
+    repaired=[]
+    for word in normalized.split():
+        if len(word) < 4:
+            repaired.append(word)
+            continue
+        matches=difflib.get_close_matches(word, list(vocab), n=1, cutoff=0.78)
+        if matches and abs(len(matches[0])-len(word)) <= 3:
+            repaired.append(matches[0])
         else:
-            chosen = rec
+            repaired.append(word)
+    return " ".join(repaired)
+
+
+def _coach_extract_topic(text):
+    topics = {
+        "finishing": "Finishing", "shooting": "Finishing", "scoring": "Finishing",
+        "dribbling": "Dribbling", "dribble": "Dribbling", "1v1": "Dribbling",
+        "first touch": "First Touch", "touch": "First Touch", "control": "First Touch",
+        "passing": "Passing", "pass": "Passing", "speed": "Speed", "sprint": "Speed",
+        "soccer iq": "Soccer IQ", "tactics": "Soccer IQ", "decision": "Soccer IQ",
+    }
+    for key, category in topics.items():
+        if key in text:
+            return category
+    return None
+
+
+def _coach_find_drill(category=None, level=None, exclude_completed=True):
+    pool = DRILLS[:]
+    if category:
+        pool = [d for d in pool if d["category"] == category]
+    if level:
+        pool = [d for d in pool if d["level"].lower() == level.lower()]
+    if exclude_completed:
+        remaining=[d for d in pool if d["name"] not in data["completed"]]
+        pool = remaining or pool
+    if not pool:
+        return recommendation()
+    return min(pool, key=lambda d: (d['name'] in data['completed'], d['level']))
+
+
+def _coach_session_plan(days=3):
+    pos=data.get("favorite_position", "Winger")
+    weak=min(CATEGORIES, key=lambda c: skill_rating(c))
+    preferred={
+        "Winger":["Dribbling","First Touch","Speed","Finishing"],
+        "Striker":["Finishing","First Touch","Dribbling","Speed"],
+        "Midfielder":["Passing","First Touch","Soccer IQ","Dribbling"],
+        "Defender":["Soccer IQ","First Touch","Passing","Speed"],
+        "Fullback":["Speed","Passing","Dribbling","Soccer IQ"],
+        "Goalkeeper":["First Touch","Passing","Soccer IQ"],
+    }.get(pos, CATEGORIES)
+    categories=[weak] + [c for c in preferred if c != weak]
+    picks=[]
+    for cat in categories:
+        d=_coach_find_drill(cat)
+        if d["name"] not in [x["name"] for x in picks]:
+            picks.append(d)
+        if len(picks)>=days:
+            break
+    while len(picks)<days:
+        picks.append(recommendation())
+    return picks[:days]
+
+
+def offline_coach_response(prompt):
+    """Context-aware local coach with fuzzy typo handling and follow-up memory."""
+    raw=prompt.strip()
+    text=_coach_normalize(raw)
+    pos=data.get("favorite_position", "Winger")
+    completed=len(data.get("completed", []))
+    streak=get_streak()
+    level=get_level()
+    xp=int(data.get("xp",0))
+    ratings={c:skill_rating(c) for c in CATEGORIES}
+    strongest=max(ratings, key=ratings.get)
+    weakest=min(ratings, key=ratings.get)
+
+    # Carry lightweight conversational context across turns.
+    prior=st.session_state.get("coach_context", {})
+    topic=_coach_extract_topic(text) or prior.get("topic")
+    if topic:
+        st.session_state.coach_context={"topic":topic}
+
+    # Safety boundary around injury/medical questions.
+    if any(word in text for word in ["injury","injured","hurt","pain","knee","ankle","concussion","dizzy","fainted","swollen"]):
         return (
-            f"I'd go with **{chosen['name']}**. 🎯\n\n"
+            "I can help with soccer training, but I can't diagnose an injury. 🛑 "
+            "For pain or an injury, tell a parent/guardian and follow advice from a qualified healthcare professional. "
+            "When you're cleared to train, I can adapt a FUT TUT plan around that guidance."
+        )
+
+    # Conversational acknowledgements / greetings.
+    if re.search(r"\b(hello|hi|hey|yo|sup|good morning|good afternoon|good evening)\b", text):
+        return (
+            f"Yo {player} 👋⚽ I'm locked in. You're Level {level}, {xp} XP, {completed} drills, "
+            f"and a {streak}-day streak. Tell me what you're trying to improve and I'll build from your actual FUT TUT progress."
+        )
+
+    if re.search(r"\b(thanks|thank you|thx|ty)\b", text):
+        return "Anytime 😎⚽ Keep it simple, keep the reps clean, and we'll build from there."
+
+    # Follow-up modifiers that work even when the player only says "make it easier".
+    if "easier" in text or "simpler" in text or "beginner" in text:
+        d=_coach_find_drill(topic or weakest, "Beginner")
+        return f"Yep — let's dial it back. **{d['name']}** is the easiest fit: {d['description']} Focus on {d['focus'].lower()} and keep the pace controlled. 🎯"
+
+    if "harder" in text or "more difficult" in text or "advanced" in text:
+        d=_coach_find_drill(topic or strongest, "Advanced")
+        return f"Let's level it up. 🔥 Try **{d['name']}**: {d['description']} The challenge is {d['focus'].lower()}. Only add speed when your control stays solid."
+
+    if "why" in text and topic:
+        d=_coach_find_drill(topic)
+        return f"Because **{d['name']}** attacks the exact area you mentioned: **{d['focus'].lower()}**. It also fits your current FUT TUT progression, so you're not jumping randomly between skills."
+
+    # Explicit drill requests, including misspelled categories.
+    if any(k in text for k in ["drill", "practice", "train", "work on", "what should"]):
+        category=topic
+        chosen=_coach_find_drill(category)
+        st.session_state.coach_context={"topic": chosen["category"], "drill": chosen["name"]}
+        return (
+            f"I'd use **{chosen['name']}**. 🎯\n\n"
             f"**Why:** {chosen['description']}\n\n"
             f"**Focus:** {chosen['focus']}\n"
             f"**Dose:** {chosen['time']} · {chosen['reps']} · +{chosen['xp']} XP\n\n"
-            f"Open it from the Training Path and prioritize clean reps over rushing."
+            f"That's a {chosen['level'].lower()} {chosen['category'].lower()} option."
         )
 
-    if any(w in text for w in ["winger", "striker", "midfielder", "defender", "fullback", "goalkeeper", "position"]):
-        position_focus = {
-            "Winger": "1v1 attacks, first touch, acceleration and final-third decisions",
-            "Striker": "finishing, movement, first touch and quick decisions in the box",
-            "Midfielder": "scanning, receiving on the back foot, passing and space management",
-            "Defender": "scanning, first touch, passing and positioning",
-            "Fullback": "speed, passing, 1v1 defending/attacking and timing runs",
-            "Goalkeeper": "distribution, first touch, scanning and decision-making",
-        }
-        return f"For a **{pos}**, I'd prioritize **{position_focus.get(pos, 'first touch, passing and decision-making')}**. ⚽"
+    # Time-aware requests.
+    minute_match=re.search(r"\b(\d{1,3})\s*(?:min|mins|minute|minutes)\b", text)
+    if minute_match:
+        minutes=int(minute_match.group(1))
+        if minutes <= 15:
+            plan=[_coach_find_drill(topic or weakest)]
+        elif minutes <= 30:
+            plan=_coach_session_plan(2)
+        else:
+            plan=_coach_session_plan(3)
+        lines="\n".join(f"**{i+1}. {d['name']}** — {d['time']}" for i,d in enumerate(plan))
+        return f"You've got **{minutes} minutes**, so here's a realistic FUT TUT plan for a {pos.lower()}:\n\n{lines}\n\nKeep the quality high rather than trying to cram in everything. ⚽"
 
-    if "tactic" in text or "formation" in text or "game" in text or "match" in text:
+    # Plan / schedule requests.
+    if any(k in text for k in ["plan", "program", "schedule", "week", "tomorrow", "next few days"]):
+        days=3 if "3" in text else 5 if "5" in text else 3
+        picks=_coach_session_plan(days)
+        lines=[]
+        for i,d in enumerate(picks,1):
+            reason="weak-area work" if d["category"]==weakest else "position fit"
+            lines.append(f"**Day {i}: {d['name']}** — {d['category']} · {d['time']} · {reason}")
+        return f"Here's a **{days}-day {pos.lower()} plan** built from your actual FUT TUT profile:\n\n" + "\n".join(lines) + "\n\nThe idea is simple: build your weakest area without ignoring the skills your position needs most. 🔥"
+
+    # Progress / stats.
+    if any(k in text for k in ["progress", "stats", "level", "how am i doing", "how i am doing", "good am i"]):
         return (
-            "Try this simple match-reading rule: **scan before the ball arrives, "
-            "identify your next action, then execute**. 👀⚽\n\n"
-            "As a general attacking cue: if space is open, carry; if a teammate has a better angle, pass; "
-            "if the defender is isolated, attack the 1v1."
+            f"**Your FUT TUT check-in:** Level **{level}**, **{xp} XP**, **{completed}/60 drills**, and a **{streak}-day streak**. 🔥\n\n"
+            f"Strongest: **{strongest} ({ratings[strongest]}/99)**\n"
+            f"Biggest opportunity: **{weakest} ({ratings[weakest]}/99)**\n\n"
+            f"For a {pos.lower()}, I'd put your next training emphasis on **{weakest}** while keeping {strongest.lower()} as a strength."
         )
 
-    if "confidence" in text or "nervous" in text or "pressure" in text:
+    # Position-specific advice.
+    if any(k in text for k in ["position", "winger", "striker", "midfielder", "defender", "fullback", "goalkeeper"]):
+        focus={
+            "Winger":"1v1 attack, first touch, acceleration, and final-third decisions",
+            "Striker":"finishing, movement, first touch, and fast decisions around the box",
+            "Midfielder":"scanning, receiving on the back foot, passing, and managing space",
+            "Defender":"scanning, first touch, passing, positioning, and timing",
+            "Fullback":"speed, passing, 1v1 play, and timing attacking runs",
+            "Goalkeeper":"distribution, first touch, scanning, and decision-making",
+        }.get(pos,"first touch, passing, and decision-making")
+        return f"As a **{pos}**, I'd build around **{focus}**. ⚽ Your current weakest FUT TUT area is **{weakest} ({ratings[weakest]}/99)**, so that's the first place I'd attack."
+
+    # Tactics / match play.
+    if any(k in text for k in ["tactic", "formation", "match", "game", "play better", "decision", "space"]):
         return (
-            "Use a tiny match cue: **see → decide → play**. 🧠\n\n"
-            "Don't try to perform five skills at once. Give yourself one simple job for the next action, "
-            "then reset and look again."
+            "Use this simple decision ladder: **scan → identify space → choose the safest useful action → execute**. 👀⚽\n\n"
+            "If the defender gives you space, carry. If a teammate has the better angle, pass. If you're isolated with a defender and have support behind you, attack the 1v1 with a clear move."
         )
 
-    if "xp" in text or "reward" in text or "points" in text:
+    # Confidence / pressure.
+    if any(k in text for k in ["confidence", "nervous", "pressure", "afraid", "scared", "overthink"]):
         return (
-            f"You have **{xp} XP** at Level **{level}**. Every drill's XP reward is one-time, "
-            "so repeating a drill builds your training history without farming infinite XP. ✅"
+            "When pressure hits, shrink the task. 🧠⚽ Don't try to prove everything on one touch. Use one cue: **scan → decide → play**. "
+            "After the action, reset instead of replaying it in your head. Your next decision is the only one you need to solve."
         )
 
+    # XP / rewards.
+    if any(k in text for k in ["xp", "reward", "points", "claim"]):
+        claimed=len(data.get("xp_claimed", []))
+        return f"You've earned **{xp} XP** and claimed XP on **{claimed} drills**. ✅ Each drill's XP reward is protected so repeating a drill can't farm infinite points."
+
+    # "What can you do?" / capability prompt.
+    if any(k in text for k in ["what can you", "help me", "can you", "options"]):
+        return (
+            "A lot 😎 I can pick drills, build short or multi-day plans, explain why a drill fits, compare skills, "
+            "help with position-specific play, talk tactics, check your FUT TUT progress, and adjust a plan when you say things like **make it easier**, **harder**, or **I only have 20 minutes**."
+        )
+
+    # Graceful final response that still uses profile data.
+    rec=_coach_find_drill(topic)
+    st.session_state.coach_context={"topic": rec["category"], "drill": rec["name"]}
     return (
-        f"I'm with you. ⚽ Based on your current profile, I'd start with **{rec['name']}** "
-        f"and focus on **{rec['focus'].lower()}**. "
-        f"You can ask me for a *training plan*, *drill*, *tactics*, *position advice*, or *progress check*."
+        f"I get what you're asking — and you don't have to type perfectly. 😎⚽ "
+        f"Based on your **{pos.lower()}** profile and your current progress, I'd start with **{rec['name']}**. "
+        f"Your biggest development opportunity right now is **{weakest}**, so that's what I'd prioritize. "
+        f"You can also tell me a time limit, like **20 minutes**, or say **make it easier** and I'll adapt the plan."
     )
-
 
 def primary_button(label, key, disabled=False):
     return st.button(label, key=key, use_container_width=True, type="primary", disabled=disabled)
@@ -1042,7 +1178,7 @@ Only name FUT TUT drills from the available list above.
 Keep answers focused and actionable.
 """
                     conversation = [{"role":"system","content":system_prompt}] + st.session_state.coach_messages[-12:]
-                    model = os.environ.get("FUT_TUT_AI_MODEL", "gpt-5.6-luna")
+                    model = os.environ.get("FUT_TUT_AI_MODEL", "gpt-5")
                     with st.spinner("Coach is thinking…"):
                         client = OpenAI(api_key=api_key)
                         response = client.responses.create(model=model, input=conversation)
